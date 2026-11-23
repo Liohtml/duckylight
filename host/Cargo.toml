@@ -1,0 +1,49 @@
+[package]
+name = "duckylight"
+version = "0.1.0"
+edition = "2021"
+description = "Lighting control for the Ducky One 3 SF RGB running the SF-RGB firmware"
+license = "GPL-2.0-or-later"
+repository = "https://github.com/Liohtml/duckylight"
+
+[features]
+default = ["app"]
+# Everything that needs a desktop: window, tray, screen capture, audio. The core (protocol,
+# geometry, frames, light thread, settings) builds and tests without it.
+app = ["dep:eframe", "dep:tray-icon", "dep:xcap", "dep:libwayshot", "dep:cpal", "dep:rfd", "dep:raw-window-handle", "dep:gtk"]
+xcap = ["dep:xcap"]
+libwayshot = ["dep:libwayshot"]
+raw-window-handle = ["dep:raw-window-handle"]
+gtk = ["dep:gtk"]
+
+[dependencies]
+clap = { version = "4.6.9", features = ["derive"] }
+cpal = { version = "0.18.2", optional = true }
+directories = "6.0.0"
+eframe = { version = "0.37.0", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"], optional = true }
+egui = "0.37.0"
+hidapi = { version = "2.6.7", default-features = false, features = ["linux-static-hidraw", "windows-native"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp", "ico"] }
+raw-window-handle = { version = "0.6.2", optional = true }
+rfd = { version = "0.18.0", optional = true }
+rustfft = "6.4.1"
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.2.2"
+tray-icon = { version = "0.26.1", optional = true }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
+
+[build-dependencies]
+serde_json = "1.0.154"
+winresource = "0.1.34"
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Graphics_Gdi", "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Console"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = { version = "0.18", optional = true }
+libwayshot = { version = "0.10.0", optional = true }
+xcap = { version = "0.9.10", optional = true }

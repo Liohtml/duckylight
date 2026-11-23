@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=duckylight
+GenericName=Tastaturbeleuchtung
+Comment=Licht für die Ducky One 3 SF RGB: Bild, Bildschirmfarben, Animationen, Musik
+Exec=duckylight
+Icon=duckylight
+Categories=Utility;Settings;
+StartupWMClass=duckylight

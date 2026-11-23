@@ -1,0 +1,16 @@
+.venv/
+downloads/
+build/
+tools/ducky-one3-isp/
+tools/DuckyOne3-RGB-Linux/
+firmware/
+.superpowers/
+__pycache__/
+.omc/
+host/target/
+host/dist/
+
+# compiled host tests
+tests/fmc/test_fmc_slots
+tests/host_rgb/test_protocol
+tests/lighting/test_lighting_state
