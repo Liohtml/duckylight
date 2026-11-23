@@ -132,3 +132,11 @@ fn a_firmware_with_another_led_count_is_refused() {
     let mut kb = Keyboard::new(fake);
     assert!(matches!(kb.info(), Err(Error::Incompatible(_))));
 }
+
+#[test]
+fn a_firmware_speaking_another_protocol_version_is_refused() {
+    let mut fake = FakeKeyboard::new();
+    fake.pretend_protocol(2);
+    let mut kb = Keyboard::new(fake);
+    assert!(matches!(kb.info(), Err(Error::Incompatible(_))));
+}

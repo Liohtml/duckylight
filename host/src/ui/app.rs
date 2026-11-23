@@ -88,6 +88,8 @@ pub struct App {
     quitting: bool,
     bar_width: f32,
     pill_width: f32,
+    /// A setting of a live mode has changed; restart the mode once the pointer is released.
+    restart_pending: bool,
     /// Running from somewhere other than the installed place: offer to install.
     #[cfg_attr(not(windows), allow(dead_code))]
     offer_install: bool,
@@ -269,7 +271,13 @@ impl App {
             wake_tx,
             Options { preview: Some(preview.clone()), ..Options::default() },
         );
-        let tray = tray::start(show_window_fn(cc), tx.clone());
+        // A Wayland window cannot be hidden and shown again, so there the window is the program:
+        // no tray icon, and closing it ends the light.
+        let tray = if cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            Err("unter Wayland lässt sich ein Fenster nicht verstecken".to_string())
+        } else {
+            tray::start(show_window_fn(cc), tx.clone())
+        };
         let paint = cfg.active_profile.as_deref().and_then(|n| cfg.profile(n)).map(Profile::frame).unwrap_or_else(|| Frame::solid([10, 132, 255]));
         let mut app = App {
             saved: cfg.clone(),
@@ -295,6 +303,7 @@ impl App {
             quitting: false,
             bar_width: 640.0,
             pill_width: 330.0,
+            restart_pending: false,
             offer_install: Self::not_installed(),
         };
         if let Some(p) = app.cfg.image.path.clone() {
@@ -331,7 +340,7 @@ impl App {
                         self.offer_install = false;
                     }
                     if Self::chip(ui, true, "Installieren") {
-                        match crate::install::install().and_then(|_| crate::install::launch_installed_soon()) {
+                        match crate::install::install().and_then(|_| crate::install::launch_installed()) {
                             Ok(()) => {
                                 // The installed copy takes over; this one lets go of the keyboard.
                                 self.quitting = true;
@@ -400,8 +409,10 @@ impl App {
     fn load_picture(&mut self, ctx: &egui::Context, path: &Path, announce: bool) {
         match image_mode::decode(path) {
             Ok(img) => {
-                // A thumbnail is all the window needs; the keyboard has 68 pixels.
-                let small = ::image::imageops::thumbnail(&img, img.width().min(640), (img.height() as u64 * img.width().min(640) as u64 / img.width().max(1) as u64).max(1) as u32);
+                // A thumbnail is all the window needs; the keyboard has 68 pixels. Bounded on both
+                // sides: a very tall picture would otherwise make a texture no graphics card takes.
+                let (tw, th) = image_mode::thumb_size(img.width(), img.height());
+                let small = ::image::imageops::thumbnail(&img, tw, th);
                 let tex = egui::ColorImage::from_rgba_unmultiplied([small.width() as usize, small.height() as usize], small.as_raw());
                 self.picture_tex = Some(ctx.load_texture("picture", tex, egui::TextureOptions::LINEAR));
                 self.picture = Some(small);
@@ -421,10 +432,13 @@ impl App {
     }
 
     fn start_screen(&mut self) {
+        // The list of screens comes from a capture that lives and dies on this thread; the one
+        // that does the work is opened by the light thread itself.
         match crate::capture::system() {
             Ok(mut cap) => {
                 self.monitors = cap.monitors();
-                self.send(Command::SetSource(Box::new(Live::new(cap, self.cfg.screen.clone()))));
+                drop(cap);
+                self.send(Command::SetSource(Box::new(Live::new(crate::capture::Lazy::new(), self.cfg.screen.clone()))));
             }
             Err(e) => {
                 self.say(e);
@@ -474,6 +488,11 @@ impl App {
                 Report::State(s) => {
                     self.brightness = s.brightness;
                     self.state = Some(s);
+                }
+                Report::Stopped => {
+                    self.mode = ModeKind::Off;
+                    self.cfg.last_mode = ModeKind::Off;
+                    *self.preview.lock().unwrap() = Frame::black();
                 }
                 Report::Burned(slot) => {
                     self.mode = ModeKind::Off;
@@ -823,9 +842,7 @@ impl App {
             ui.label("Farbkraft");
             changed |= ui.add(egui::Slider::new(&mut s.saturation, 0.5..=2.5).show_value(false)).changed();
         });
-        if changed {
-            self.start_screen();
-        }
+        self.restart_pending |= changed; // applied on release: a drag must not reopen the capture every frame
     }
 
     fn swatches(ui: &mut Ui, colour: &mut Rgb) -> bool {
@@ -964,7 +981,7 @@ impl App {
         }
     }
 
-    fn music_controls(&mut self, ui: &mut Ui, ctx: &egui::Context) {
+    fn music_controls(&mut self, ui: &mut Ui, _ctx: &egui::Context) {
         Self::hint(ui, "Die Tastatur folgt dem, was der Computer gerade abspielt: Bässe links, Höhen rechts. Das Mikrofon bleibt aus.");
         let mut changed = false;
         ui.horizontal(|ui| {
@@ -972,9 +989,8 @@ impl App {
             changed |= ui.add(egui::Slider::new(&mut self.cfg.music.sensitivity, 0.3..=5.0).logarithmic(true).show_value(false)).changed();
         });
         changed |= Self::palette_row(ui, &mut self.cfg.music.colours);
-        if changed && !ctx.input(|i| i.pointer.any_down()) {
-            self.set_mode(ctx, ModeKind::Music);
-        }
+        // `changed` is only true while the pointer is down, so remember it and apply on release.
+        self.restart_pending |= changed;
     }
 
     fn footer(&mut self, ui: &mut Ui) {
@@ -996,7 +1012,7 @@ impl App {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let text = match &self.tray {
                     Ok(_) => "Schließen lässt das Licht weiterlaufen – das Symbol neben der Uhr holt das Fenster zurück.",
-                    Err(_) => "Dieser Desktop hat keinen Infobereich: Das Licht läuft, solange dieses Fenster offen ist.",
+                    Err(_) => "Das Licht läuft, solange dieses Fenster offen ist.",
                 };
                 ui.label(RichText::new(text).color(MUTED).small());
             });
@@ -1036,8 +1052,11 @@ impl eframe::App for App {
                 self.cfg.anim.gif = Some(path);
                 self.start_anim();
             } else {
+                let before = self.cfg.image.path.clone();
                 self.load_picture(&ctx, &path, true);
-                self.set_mode(&ctx, ModeKind::Image);
+                if self.cfg.image.path != before || before.as_deref() == Some(path.as_path()) {
+                    self.set_mode(&ctx, ModeKind::Image); // only if it really was a picture
+                }
             }
         }
 
@@ -1074,6 +1093,11 @@ impl eframe::App for App {
             self.footer(ui);
         });
 
+        if self.restart_pending && !ctx.input(|i| i.pointer.any_down()) {
+            self.restart_pending = false;
+            let m = self.mode;
+            self.set_mode(&ctx, m);
+        }
         // Settings are written when they have changed and the hand has let go.
         if self.cfg != self.saved && !ctx.input(|i| i.pointer.any_down()) {
             if config::save(&self.cfg).is_ok() {

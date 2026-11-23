@@ -146,6 +146,8 @@ impl Source for Generated {
 
 /// The shortest time a GIF frame is shown. Many GIFs say 0 and mean "as fast as you like".
 const MIN_DELAY: Duration = Duration::from_millis(20);
+/// The largest canvas a GIF may claim, per side.
+const MAX_SIDE: u32 = 4096;
 /// More frames than this are not loaded: at 68 pixels a frame that is already half an hour.
 const MAX_FRAMES: usize = 6000;
 
@@ -164,6 +166,12 @@ impl Gif {
         let file = std::fs::File::open(path).map_err(|e| ImageError(format!("Die Datei lässt sich nicht öffnen: {e}")))?;
         let dec = ::image::codecs::gif::GifDecoder::new(std::io::BufReader::new(file))
             .map_err(|e| ImageError(format!("Das ist kein GIF, das ich lesen kann: {e}")))?;
+        // The header is believed before a single pixel is decoded, and a 21-byte file can claim a
+        // 65535 x 65535 canvas -- gigabytes per frame. Nothing meant for 68 keys needs that.
+        let (w, h) = ::image::ImageDecoder::dimensions(&dec);
+        if w == 0 || h == 0 || w > MAX_SIDE || h > MAX_SIDE {
+            return Err(ImageError(format!("Das GIF ist {w} × {h} Bildpunkte groß – mehr als {MAX_SIDE} pro Seite lade ich nicht.")));
+        }
         let mut frames = Vec::new();
         for fr in dec.into_frames().take(MAX_FRAMES) {
             let fr = fr.map_err(|e| ImageError(format!("Das GIF ist beschädigt: {e}")))?;

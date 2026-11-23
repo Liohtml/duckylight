@@ -309,7 +309,10 @@ const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 #[cfg(windows)]
 fn reg(args: &[&str]) -> io::Result<std::process::Output> {
     use std::os::windows::process::CommandExt;
-    std::process::Command::new("reg").args(args).creation_flags(0x0800_0000 /* CREATE_NO_WINDOW */).output()
+    // By full path: a bare name is looked for next to our own program first, and that may be a
+    // download folder.
+    let root = std::env::var_os("SystemRoot").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    std::process::Command::new(root.join("System32").join("reg.exe")).args(args).creation_flags(0x0800_0000 /* CREATE_NO_WINDOW */).output()
 }
 
 #[cfg(windows)]

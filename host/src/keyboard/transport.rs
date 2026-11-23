@@ -33,7 +33,7 @@ impl std::fmt::Display for OpenError {
             ),
             OpenError::NoAccess(e) => {
                 if cfg!(target_os = "linux") {
-                    write!(f, "Kein Zugriff auf die Tastatur ({e}). Die udev-Regel fehlt: »duckylight install-udev« zeigt, wie sie eingerichtet wird.")
+                    write!(f, "Kein Zugriff auf die Tastatur ({e}). Die udev-Regel fehlt: »install.sh« aus dem Paket richtet sie ein (70-duckylight.rules), danach die Tastatur neu anstecken.")
                 } else {
                     write!(f, "Kein Zugriff auf die Tastatur ({e}). Hält ein anderes Programm sie geöffnet?")
                 }

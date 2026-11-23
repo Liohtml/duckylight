@@ -31,6 +31,9 @@ struct Cli {
     /// Das Fenster gleich in dieser Betriebsart öffnen: tastatur, bild, bildschirm, tasten, animation, musik
     #[arg(long)]
     mode: Option<String>,
+    /// Kurz warten, falls ein anderes duckylight die Tastatur gerade noch hält (nach dem Installieren)
+    #[arg(long, hide = true)]
+    wait_for_keyboard: bool,
     #[command(subcommand)]
     cmd: Option<Cmd>,
 }
@@ -199,8 +202,19 @@ fn attach_console() {
 /// No command: open the window. Exactly one instance holds the keyboard; a second start says so
 /// in a dialog, because a double-clicked program has no terminal to print to.
 #[cfg(feature = "app")]
-fn run_window(hidden: bool, mode: Option<String>) -> ExitCode {
-    let _lock = match lock::acquire() {
+fn run_window(hidden: bool, mode: Option<String>, wait: bool) -> ExitCode {
+    // Started by the copy that just installed us: it lets go of the keyboard within a moment.
+    let mut tries = if wait { 40 } else { 1 };
+    let acquired = loop {
+        match lock::acquire() {
+            Err(LockError::Held(_)) if tries > 1 => {
+                tries -= 1;
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            other => break other,
+        }
+    };
+    let _lock = match acquired {
         Ok(l) => l,
         Err(LockError::Held(_)) => {
             if !hidden {
@@ -290,7 +304,10 @@ fn main() -> ExitCode {
                 s.region = duckylight::config::Region::Bottom;
             }
             match duckylight::capture::system() {
-                Ok(cap) => run_source(Box::new(duckylight::modes::screen::Live::new(cap, s)), seconds),
+                Ok(cap) => {
+                    drop(cap); // it only proved that this desktop can be captured; the light thread opens its own
+                    run_source(Box::new(duckylight::modes::screen::Live::new(duckylight::capture::Lazy::new(), s)), seconds)
+                }
                 Err(e) => {
                     eprintln!("{e}");
                     ExitCode::FAILURE
@@ -377,10 +394,10 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         #[cfg(feature = "app")]
-        None => run_window(cli.hidden, cli.mode),
+        None => run_window(cli.hidden, cli.mode, cli.wait_for_keyboard),
         #[cfg(not(feature = "app"))]
         None => {
-            let _ = (cli.hidden, cli.mode);
+            let _ = (cli.hidden, cli.mode, cli.wait_for_keyboard);
             println!("duckylight {} (ohne Fenster gebaut; »duckylight --help« zeigt die Befehle)", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }

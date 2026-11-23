@@ -32,6 +32,10 @@ pub struct FakeKeyboard {
     replies: VecDeque<Vec<u8>>,
     /// Set to make every write fail, as when the cable is pulled.
     pub unplugged: bool,
+    /// How long each report takes, as on a real USB link (1 ms per report there).
+    pub delay: Duration,
+    protocol: u8,
+    commit_times: Vec<std::time::Instant>,
 }
 
 impl Default for FakeKeyboard {
@@ -63,6 +67,9 @@ impl FakeKeyboard {
             led_count: LED_COUNT as u8,
             replies: VecDeque::new(),
             unplugged: false,
+            delay: Duration::ZERO,
+            protocol: 1,
+            commit_times: Vec::new(),
         }
     }
 
@@ -100,6 +107,13 @@ impl FakeKeyboard {
     pub fn stay_busy_for(&mut self, commits: u32) {
         self.busy_left = commits;
     }
+    pub fn pretend_protocol(&mut self, v: u8) {
+        self.protocol = v;
+    }
+    /// When each accepted frame arrived.
+    pub fn commit_times(&self) -> &[std::time::Instant] {
+        &self.commit_times
+    }
     pub fn pretend_led_count(&mut self, n: u8) {
         self.led_count = n;
     }
@@ -123,7 +137,7 @@ impl FakeKeyboard {
         let p = &r[1..];
         match r[0] {
             GET_INFO => {
-                let mut extra = vec![1, 5, 15, self.led_count, 8, 1];
+                let mut extra = vec![self.protocol, 5, 15, self.led_count, 8, 1];
                 extra.extend_from_slice(b"SF-RGB");
                 Self::reply(GET_INFO, 0, &extra)
             }
@@ -162,6 +176,7 @@ impl FakeKeyboard {
                     self.staged_valid = false;
                     self.mode = 1;
                     self.accepted += 1;
+                    self.commit_times.push(std::time::Instant::now());
                 } else if status != 2 {
                     self.staged_valid = false;
                 }
@@ -214,6 +229,9 @@ impl Transport for FakeKeyboard {
     fn write(&mut self, report: &[u8; REPORT]) -> io::Result<()> {
         if self.unplugged {
             return Err(io::Error::new(io::ErrorKind::BrokenPipe, "device gone"));
+        }
+        if !self.delay.is_zero() {
+            std::thread::sleep(self.delay);
         }
         if let Some(r) = self.handle(report) {
             self.replies.push_back(r);

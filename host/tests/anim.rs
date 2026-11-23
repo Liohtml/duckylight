@@ -92,3 +92,22 @@ fn a_file_that_is_not_a_gif_is_an_error_not_a_panic() {
     assert!(Gif::load(&p).is_err());
     assert!(Gif::load(std::path::Path::new("/no/such.gif")).is_err());
 }
+
+#[test]
+fn a_gif_claiming_an_enormous_canvas_is_refused_quickly() {
+    // A 21-byte file can claim a 65535 x 65535 canvas; decoding it would take gigabytes.
+    let p = std::env::temp_dir().join(format!("duckylight-{}-bomb.gif", std::process::id()));
+    let mut bytes = b"GIF89a".to_vec();
+    bytes.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00]); // logical screen 65535 x 65535
+    bytes.extend_from_slice(&[0x2C, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x02, 0x02, 0x4C, 0x01, 0x00, 0x3B]);
+    std::fs::write(&p, &bytes).unwrap();
+    let t = std::time::Instant::now();
+    assert!(Gif::load(&p).is_err());
+    assert!(t.elapsed() < Duration::from_secs(2), "took {:?}", t.elapsed());
+    // The earlier "not a GIF" file parses as a 25120 x 29813 canvas: refused just as fast.
+    let q = std::env::temp_dir().join(format!("duckylight-{}-nogif2.gif", std::process::id()));
+    std::fs::write(&q, b"GIF89a but not really").unwrap();
+    let t = std::time::Instant::now();
+    assert!(Gif::load(&q).is_err());
+    assert!(t.elapsed() < Duration::from_secs(2), "took {:?}", t.elapsed());
+}

@@ -100,6 +100,13 @@ impl<T: Transport> Keyboard<T> {
     pub fn info(&mut self) -> Result<Info, Error> {
         let r = self.ask(&protocol::get_info())?;
         let info = protocol::parse_info(&r)?;
+        if info.protocol != protocol::VERSION {
+            return Err(Error::Incompatible(format!(
+                "Die Firmware spricht Protokollversion {}, dieses Programm Version {}. Bitte beide auf denselben Stand bringen.",
+                info.protocol,
+                protocol::VERSION
+            )));
+        }
         if info.leds as usize != LED_COUNT || info.leds_per_chunk == 0 {
             return Err(Error::Incompatible(format!(
                 "Die Firmware meldet {} LEDs, dieses Programm ist für {} gebaut.",

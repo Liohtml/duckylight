@@ -26,7 +26,8 @@ struct Wlr {
     conn: WayshotConnection,
 }
 
-// The connection is only ever used from the light thread that owns this value.
+// `Capture` asks for `Send` so a capture can be handed to the light thread. This one is never
+// handed anywhere: `capture::Lazy` opens it on the thread that uses it, and it is dropped there.
 unsafe impl Send for Wlr {}
 
 impl Capture for Wlr {

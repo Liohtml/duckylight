@@ -32,7 +32,8 @@ Oben die Tastatur, wie sie gerade leuchtet. Darunter sechs Betriebsarten — was
 | **Musik** | folgt dem, was der Computer abspielt — Bässe links, Höhen rechts |
 
 Das Fenster zu schließen beendet das Licht nicht: duckylight läuft im Infobereich weiter, das Symbol
-dort holt das Fenster zurück oder beendet das Programm.
+dort holt das Fenster zurück oder beendet das Programm. Ausnahme ist Linux unter Wayland: dort lässt
+sich ein Fenster nicht verstecken, das Licht läuft, solange es offen ist (oder über die Befehle unten).
 
 ## Aus Skripten
 

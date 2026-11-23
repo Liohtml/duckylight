@@ -35,6 +35,8 @@ pub enum Report {
     Error(String),
     Burned(u8),
     State(State),
+    /// The source ended by itself; the keyboard has its lighting back.
+    Stopped,
 }
 
 #[derive(Clone)]
@@ -45,15 +47,21 @@ pub struct Options {
     pub retry: Duration,
     /// Receives every frame produced, also when no keyboard is connected.
     pub preview: Option<Arc<Mutex<Frame>>>,
+    /// How often a source is asked while no keyboard is connected: enough for the preview,
+    /// not the full rate -- a screen capture must not run flat out for a keyboard that is not there.
+    pub idle_pace: Duration,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { keepalive: Duration::from_secs(1), retry: Duration::from_secs(1), preview: None }
+        Options { keepalive: Duration::from_secs(1), retry: Duration::from_secs(1), preview: None, idle_pace: Duration::from_secs(1) }
     }
 }
 
 const IDLE_WAKE: Duration = Duration::from_millis(250);
+/// Below this the keyboard is close to dark; a layout is never saved dimmer than this.
+const MIN_SAVED_BRIGHTNESS: u8 = 60;
+const DEFAULT_BRIGHTNESS: u8 = 100;
 
 /// Wait for a command, but wake on time. Windows rounds a channel wait up to its 15.6 ms timer
 /// tick, which turned a 33 ms frame pace into 47 ms; `thread::sleep` uses the high-resolution
@@ -124,6 +132,9 @@ where
 
     loop {
         let wait = match &source {
+            // Without a keyboard the source is asked rarely, but the keyboard is still looked
+            // for at the usual rate -- two different clocks.
+            Some(_) if !connected => next_due.saturating_duration_since(Instant::now()).min(opts.retry),
             Some(_) => next_due.saturating_duration_since(Instant::now()),
             None => IDLE_WAKE,
         };
@@ -153,7 +164,18 @@ where
                 source = None;
                 last = None;
                 match rc.get() {
-                    Some(kb) => match kb.burn_profile(layer, &frame) {
+                    Some(kb) => match kb
+                        .state()
+                        .and_then(|s| {
+                            // What is saved is what the keyboard shows without the PC. Saved at
+                            // a brightness near zero that would be a dark keyboard, so lift it.
+                            if s.brightness < MIN_SAVED_BRIGHTNESS {
+                                kb.set_effect(s.effect, s.speed, DEFAULT_BRIGHTNESS)?;
+                            }
+                            Ok(())
+                        })
+                        .and_then(|()| kb.burn_profile(layer, &frame))
+                    {
                         Ok(()) => {
                             let _ = tx.send(Report::Burned(layer));
                             if let Ok(s) = kb.state() {
@@ -226,6 +248,10 @@ where
                         connected = true;
                         announced_missing = false;
                         last_ping = Instant::now();
+                        // The keyboard is back: light it now, not at the slow pace kept
+                        // while it was away.
+                        next_due = Instant::now();
+                        last_sent = None;
                         let _ = tx.send(Report::Connected(info, state));
                     }
                     Err(e) => rc.lost(&e.to_string()),
@@ -253,6 +279,9 @@ where
             continue;
         };
 
+        if Instant::now() < next_due {
+            continue; // woken to look for the keyboard, not for a frame
+        }
         // The pace is measured from here, so the time a frame takes to produce and send comes
         // out of the pause instead of being added to it.
         let tick = Instant::now();
@@ -269,15 +298,30 @@ where
         if let Some(e) = src.take_error() {
             let _ = tx.send(Report::Error(e));
         }
-        next_due = tick + src.interval().min(opts.keepalive);
+        next_due = tick + if connected { src.interval().min(opts.keepalive) } else { src.interval().max(opts.idle_pace) };
+        // 3. A source that has ended: hand the lighting back rather than hold its last frame.
+        if src.finished() {
+            source = None;
+            last = None;
+            if let Some(kb) = rc.get() {
+                if let Err(e) = kb.release() {
+                    lost!(e.to_string());
+                }
+            }
+            let _ = tx.send(Report::Stopped);
+            continue;
+        }
 
-        let keepalive_due = last_sent.is_none_or(|t| t.elapsed() >= opts.keepalive);
+        // Measured from tick to tick. Stamped after the send, the time the send took made this
+        // just miss every other tick, and a still picture went out every two seconds -- exactly
+        // the keyboard's timeout.
+        let keepalive_due = last_sent.is_none_or(|t| tick.duration_since(t) >= opts.keepalive.mul_f32(0.9));
         if let (Some(f), true) = (&last, changed || keepalive_due) {
             if connected {
                 if let Some(kb) = rc.get() {
                     match kb.send_frame(f) {
                         Ok(()) => {
-                            last_sent = Some(Instant::now());
+                            last_sent = Some(tick);
                             fps_count += 1;
                         }
                         Err(e) => lost!(e.to_string()),

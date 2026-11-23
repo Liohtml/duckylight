@@ -20,6 +20,11 @@ pub trait Source: Send {
     fn take_error(&mut self) -> Option<String> {
         None
     }
+    /// True when this source can produce nothing more (its sound device is gone, say). The
+    /// light thread then hands the lighting back to the keyboard instead of holding a last frame.
+    fn finished(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

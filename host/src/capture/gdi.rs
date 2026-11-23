@@ -13,6 +13,7 @@ const MONITORINFOF_PRIMARY: u32 = 1;
 
 pub struct Gdi {
     monitors: Vec<(String, RECT)>,
+    listed: std::time::Instant,
 }
 
 unsafe extern "system" fn on_monitor(mon: HMONITOR, _dc: HDC, _rect: *mut RECT, data: LPARAM) -> i32 {
@@ -29,7 +30,7 @@ unsafe extern "system" fn on_monitor(mon: HMONITOR, _dc: HDC, _rect: *mut RECT, 
 
 impl Gdi {
     pub fn new() -> Gdi {
-        let mut g = Gdi { monitors: Vec::new() };
+        let mut g = Gdi { monitors: Vec::new(), listed: std::time::Instant::now() };
         g.refresh();
         g
     }
@@ -41,9 +42,15 @@ impl Gdi {
         }
         list.sort_by_key(|m| !m.2); // the main screen first
         self.monitors = list.into_iter().map(|(n, r, _)| (n, r)).collect();
+        self.listed = std::time::Instant::now();
     }
 
     fn rect(&mut self, monitor: Option<&str>) -> Result<RECT, String> {
+        // A resolution, scaling or arrangement change keeps the monitor's name and moves its
+        // rectangle; with a stale one most of the copy would come from off-screen, as black.
+        if self.listed.elapsed() >= std::time::Duration::from_secs(1) {
+            self.refresh();
+        }
         let find = |g: &Gdi| match monitor {
             None => g.monitors.first().map(|m| m.1),
             Some(name) => g.monitors.iter().find(|m| m.0 == name).map(|m| m.1),
@@ -89,8 +96,8 @@ impl Capture for Gdi {
             bmi.bmiHeader.biPlanes = 1;
             bmi.bmiHeader.biBitCount = 32;
             bmi.bmiHeader.biCompression = BI_RGB;
+            SelectObject(mem, old); // GetDIBits requires the bitmap not to be selected into a DC
             let lines = GetDIBits(mem, bmp, 0, dh as u32, buf.as_mut_ptr() as *mut _, &mut bmi, DIB_RGB_COLORS);
-            SelectObject(mem, old);
             DeleteObject(bmp);
             DeleteDC(mem);
             ReleaseDC(null_mut(), screen);

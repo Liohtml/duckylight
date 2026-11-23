@@ -115,6 +115,8 @@ pub struct Visualiser {
     palette: Vec<Rgb>,
     previous: Option<Duration>,
     error: Arc<Mutex<Option<String>>>,
+    /// The capture has died: there is nothing more to show.
+    dead: bool,
     _capture: Option<capture::Loopback>,
 }
 
@@ -127,6 +129,7 @@ impl Visualiser {
             palette: config::palette(&s.colours, [0, 194, 255]),
             previous: None,
             error: Arc::new(Mutex::new(None)),
+            dead: false,
             _capture: None,
         };
         (v, bands)
@@ -173,7 +176,15 @@ impl Source for Visualiser {
     }
 
     fn take_error(&mut self) -> Option<String> {
-        self.error.lock().unwrap().take()
+        let e = self.error.lock().unwrap().take();
+        // The only errors here are a capture that has stopped. Black bars re-sent for ever would
+        // leave the keyboard dark, so the source ends and the keyboard gets its light back.
+        self.dead |= e.is_some();
+        e
+    }
+
+    fn finished(&self) -> bool {
+        self.dead
     }
 }
 

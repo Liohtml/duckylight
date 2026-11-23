@@ -3,6 +3,8 @@ use crate::frame::{Frame, Rgb};
 use crate::geometry::LED_COUNT;
 
 pub const REPORT: usize = 32;
+/// The protocol version this program speaks; the firmware reports its own in GET_INFO.
+pub const VERSION: u8 = 1;
 
 pub const GET_INFO: u8 = 0x01;
 pub const FRAME_CHUNK: u8 = 0x02;

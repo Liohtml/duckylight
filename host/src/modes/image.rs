@@ -87,3 +87,13 @@ impl Source for Still {
         Duration::from_secs(1)
     }
 }
+
+/// The size of the thumbnail the window shows for a picture: at most 640 on either side, never
+/// enlarged, never empty. Both sides are bounded -- a full-page screenshot is thousands of pixels
+/// tall, and a texture that tall is more than a graphics card takes.
+pub fn thumb_size(width: u32, height: u32) -> (u32, u32) {
+    const MAX: f64 = 640.0;
+    let (w, h) = (width.max(1) as f64, height.max(1) as f64);
+    let k = (MAX / w).min(MAX / h).min(1.0);
+    (((w * k).round() as u32).clamp(1, 640), ((h * k).round() as u32).clamp(1, 640))
+}

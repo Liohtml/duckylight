@@ -29,7 +29,8 @@ Six modes. Choosing one starts it — there is nothing to apply.
 Plus **animations** (the one at the top of this page is one of six) and your own **GIFs**.
 
 Closing the window does not stop the light: duckylight keeps running in the tray, and the icon
-there brings the window back or quits.
+there brings the window back or quits. (Not on Linux under Wayland, where a window cannot be
+hidden: there the light runs while the window is open, or from the command line.)
 
 The interface is in German.
 

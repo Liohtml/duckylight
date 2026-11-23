@@ -210,3 +210,91 @@ fn an_absurd_zoom_or_pan_is_clamped_instead_of_crashing() {
         assert_eq!(image::load(&p, crop).unwrap().0[0], [10, 20, 30]);
     }
 }
+
+// --- found by the whole-branch review -----------------------------------------------------------
+
+#[test]
+fn a_still_picture_never_leaves_a_gap_near_the_keyboards_timeout() {
+    // On a real link a frame takes about 10 ms to send. The gap between two frames must stay
+    // close to the keepalive -- the keyboard falls back at twice that.
+    let r = rig(200);
+    r.fake.lock().unwrap().delay = Duration::from_millis(1);
+    r.tx.send(Command::SetSource(Box::new(Still(Frame::solid([1, 2, 3]))))).unwrap();
+    sleep(1700);
+    let times = r.fake.lock().unwrap().commit_times().to_vec();
+    assert!(times.len() >= 5, "only {} frames in 1.7 s", times.len());
+    let worst = times.windows(2).map(|w| w[1] - w[0]).max().unwrap();
+    assert!(worst <= Duration::from_millis(260), "a gap of {worst:?} at a 200 ms keepalive");
+    r.stop();
+}
+
+/// Counts how often it is asked, and can declare itself finished.
+struct Counting(Arc<Mutex<u32>>, Option<u32>);
+impl Source for Counting {
+    fn next_frame(&mut self, _elapsed: Duration) -> Option<Frame> {
+        let mut n = self.0.lock().unwrap();
+        *n += 1;
+        Some(Frame::solid([(*n % 250) as u8, 0, 0]))
+    }
+    fn interval(&self) -> Duration {
+        Duration::from_millis(10)
+    }
+    fn finished(&self) -> bool {
+        self.1.is_some_and(|limit| *self.0.lock().unwrap() >= limit)
+    }
+}
+
+#[test]
+fn without_a_keyboard_a_live_source_is_asked_rarely_not_at_full_rate() {
+    let (tx, crx) = channel();
+    let (rtx, _rx) = channel();
+    let asked = Arc::new(Mutex::new(0u32));
+    let opts = Options { idle_pace: Duration::from_millis(300), retry: Duration::from_millis(50), ..Options::default() };
+    let h = light::spawn(|| Err::<SharedFake, String>("nicht da".into()), crx, rtx, opts);
+    tx.send(Command::SetSource(Box::new(Counting(asked.clone(), None)))).unwrap();
+    sleep(700);
+    let n = *asked.lock().unwrap();
+    assert!(n <= 4, "asked {n} times in 0.7 s with no keyboard (a 10 ms source)");
+    tx.send(Command::Quit).unwrap();
+    h.join().unwrap();
+}
+
+#[test]
+fn a_source_that_has_ended_hands_the_lighting_back_instead_of_freezing_it() {
+    let r = rig(50);
+    let asked = Arc::new(Mutex::new(0u32));
+    r.tx.send(Command::SetSource(Box::new(Counting(asked, Some(5))))).unwrap();
+    sleep(400);
+    assert_eq!(r.fake.lock().unwrap().mode(), 0, "the keyboard has its lighting back");
+    let n = r.shown();
+    sleep(200);
+    assert_eq!(r.shown(), n, "and no more frames are sent");
+    assert!(r.rx.try_iter().any(|x| matches!(x, Report::Stopped)));
+    r.stop();
+}
+
+#[test]
+fn burning_never_saves_a_keyboard_that_would_be_dark_on_its_own() {
+    let r = rig(50);
+    sleep(100);
+    r.tx.send(Command::SetBrightness(0)).unwrap();
+    sleep(150);
+    assert_eq!(r.fake.lock().unwrap().brightness(), 0);
+    r.tx.send(Command::Burn { layer: 1, frame: Frame::solid([200, 0, 0]) }).unwrap();
+    sleep(300);
+    let f = r.fake.lock().unwrap();
+    assert_eq!(f.saves(), 1);
+    assert!(f.brightness() >= 60, "saved at brightness {}", f.brightness());
+    drop(f);
+    r.stop();
+}
+
+#[test]
+fn the_thumbnail_of_a_very_tall_picture_stays_small_in_both_directions() {
+    use duckylight::modes::image::thumb_size;
+    for (w, h) in [(1000, 30000), (30000, 1000), (640, 480), (1, 1), (0, 0), (100000, 100000)] {
+        let (tw, th) = thumb_size(w, h);
+        assert!((1..=640).contains(&tw) && (1..=640).contains(&th), "{w}x{h} -> {tw}x{th}");
+    }
+    assert_eq!(thumb_size(320, 200), (320, 200), "small pictures are not blown up");
+}
